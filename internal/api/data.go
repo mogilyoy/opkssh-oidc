@@ -1,0 +1,85 @@
+package api
+
+import "crypto/ed25519"
+
+type User struct {
+	Username      string   `json:"username"`
+	Email         string   `json:"email"`
+	UID           int      `json:"uid"`
+	GID           int      `json:"gid"`
+	FullName      string   `json:"fullName"`
+	HomeDirectory string   `json:"homeDirectory"`
+	Shell         string   `json:"shell"`
+	Groups        []string `json:"groups"`
+	SSHKeys       []string `json:"sshKeys"`
+}
+
+type Group struct {
+	Name    string   `json:"name"`
+	GID     int      `json:"gid"`
+	Members []string `json:"members"`
+	Sudo    bool     `json:"sudo"`
+}
+
+type Server struct {
+	issuer  string
+	users   map[string]User
+	groups  map[string]Group
+	privKey ed25519.PrivateKey
+	pubKey  ed25519.PublicKey
+	jwkID   string
+}
+
+var DefaultUsers = []User{
+	{
+		Username:      "alice",
+		Email:         "alice@example.com",
+		UID:           1001,
+		GID:           1001,
+		FullName:      "Alice Example",
+		HomeDirectory: "/home/alice",
+		Shell:         "/bin/bash",
+		Groups:        []string{"cluster-1:admin", "cluster-1:dev"},
+		SSHKeys:       []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEzBmFRYe3aWcRKNK1f0Gjv9ug9FiwUbh9M9Ig6G0pcP alice@example.com"},
+	},
+	{
+		Username:      "bob",
+		Email:         "bob@example.com",
+		UID:           1002,
+		GID:           1002,
+		FullName:      "Bob Operator",
+		HomeDirectory: "/home/bob",
+		Shell:         "/bin/bash",
+		Groups:        []string{"cluster-1:view"},
+		SSHKeys:       []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICM5N6gGZb0EgN9Jdhf7FJp2R2IhQguyyN2XCI+ud1X bob@example.com"},
+	},
+}
+
+var DefaultGroups = []Group{
+	{Name: "cluster-1:admin", GID: 2001, Members: []string{"alice"}, Sudo: true},
+	{Name: "cluster-1:dev", GID: 2002, Members: []string{"alice"}, Sudo: false},
+	{Name: "cluster-1:view", GID: 2003, Members: []string{"bob"}, Sudo: false},
+}
+
+func NewServer() *Server {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		panic(err)
+	}
+	users := make(map[string]User)
+	for _, u := range DefaultUsers {
+		users[u.Username] = u
+	}
+	groups := make(map[string]Group)
+	for _, g := range DefaultGroups {
+		groups[g.Name] = g
+	}
+	return &Server{
+		issuer:  "http://127.0.0.1:8080",
+		users:   users,
+		groups:  groups,
+		privKey: priv,
+		pubKey:  pub,
+		jwkID:   "local-opkssh-key",
+	}
+}
