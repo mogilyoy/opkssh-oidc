@@ -44,3 +44,4 @@ libnss_oslogin.so
 
 # User data (if any)
 .qwe/
+!cmd/**/*
