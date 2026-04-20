@@ -3,22 +3,22 @@ package api
 import "crypto/ed25519"
 
 type User struct {
-	Username      string   `json:"username"`
-	Email         string   `json:"email"`
-	UID           int      `json:"uid"`
-	GID           int      `json:"gid"`
-	FullName      string   `json:"fullName"`
-	HomeDirectory string   `json:"homeDirectory"`
-	Shell         string   `json:"shell"`
-	Groups        []string `json:"groups"`
-	SSHKeys       []string `json:"sshKeys"`
+	Username      string   `json:"Username"`
+	Email         string   `json:"Email"`
+	UID           int      `json:"UID"`
+	GID           int      `json:"GID"`
+	FullName      string   `json:"FullName"`
+	HomeDirectory string   `json:"HomeDirectory"`
+	Shell         string   `json:"Shell"`
+	Groups        []string `json:"Groups"`
+	SSHKeys       []string `json:"SSHKeys"`
 }
 
 type Group struct {
-	Name    string   `json:"name"`
-	GID     int      `json:"gid"`
-	Members []string `json:"members"`
-	Sudo    bool     `json:"sudo"`
+	Name    string   `json:"Name"`
+	GID     int      `json:"GID"`
+	Members []string `json:"Members"`
+	Sudo    bool     `json:"Sudo"`
 }
 
 type Server struct {
