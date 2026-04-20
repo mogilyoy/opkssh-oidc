@@ -1,134 +1,260 @@
-Весь код сгенерирован Grok Code.
+# opkssh-oidc
 
-# opkssh-oidc Prototype
+SSH-доступ к серверам через OIDC-аутентификацию с использованием короткоживущих SSH-сертификатов.
 
-Локальный прототип для проверки сценария OIDC + SSH сертификатов по RFC variant 2.
+## Как это работает
 
-## Архитектура
+1. Клиент запрашивает OIDC-токен у API-сервера (`qwe serve`).
+2. Генерирует SSH-ключ и сертификат с вшитым ID-токеном.
+3. Подключается к серверу по SSH с этим сертификатом.
+4. На сервере `AuthorizedKeysCommand` проверяет CA-подпись и верифицирует OIDC-токен.
+5. NSS-модуль резолвит пользователя (UID/GID/home) через API.
 
-- **Локальный OIDC API** (`internal/api`): Симулирует OIDC provider с эндпоинтами `/token`, `/jwks`, `/users`, `/groups`.
-- **OIDC токены** (`internal/oidc`): Генерация Ed25519-подписанных ID токенов с claims (email, groups).
-- **SSH сертификаты** (`internal/ssh`): CA на Ed25519, пользовательские сертификаты с embedded ID токенами.
-- **CLI** (`cmd/qwe`): Команды для сервера, логина, генерации сертификатов, верификации.
+---
 
-## Запуск
+## Подключение к серверу (клиент)
 
-1. **Собрать проект:**
-   ```bash
-   go build -o qwe ./cmd/qwe
-   ```
+### Требования
 
-2. **Запустить локальный OIDC API сервер:**
-   ```bash
-   ./qwe serve
-   ```
-   Сервер слушает на `:8080`.
+- Go 1.21+
+- `ssh-keygen` (предустановлен в macOS/Linux)
 
-3. **Залогиниться и получить токен:**
-   ```bash
-   ./qwe login --user alice
-   ```
-   Сохраняет токен в `~/.qwe/token.json`.
-
-4. **Сгенерировать SSH сертификат:**
-   ```bash
-   ./qwe ssh --user alice --cert-only dummy
-   ```
-   Создаёт `~/.qwe/alice-cert.pub`.
-
-5. **Проверить сертификат:**
-   ```bash
-   ./qwe verify ~/.qwe/alice-cert.pub
-   ```
-   Выводит группы и права sudo.
-
-## SSH интеграция
-
-Для использования как `AuthorizedKeysCommand`:
+### Сборка
 
 ```bash
-# В /etc/ssh/sshd_config добавить:
-AuthorizedKeysCommand /path/to/qwe auth-keys %u %k %t
+git clone https://github.com/mastervolkov/opkssh-oidc.git
+cd opkssh-oidc
+make
+```
+
+### Подключение
+
+```bash
+./qwe ssh <server-ip> --user alice --api-url http://<server-ip>:8080
+```
+
+Пример:
+
+```bash
+./qwe ssh 83.222.9.29 --user alice --api-url http://83.222.9.29:8080
+```
+
+Это автоматически:
+- получит OIDC-токен от сервера;
+- сгенерирует SSH-ключ (если нет);
+- создаст CA (если нет);
+- выпустит SSH-сертификат (15 мин TTL) с вшитым токеном;
+- подключится по SSH.
+
+Ключи и сертификаты сохраняются в `~/.qwe/`.
+
+### Доступные пользователи (тестовые)
+
+| Пользователь | Группы | Sudo |
+|---|---|---|
+| alice | cluster-1:admin, cluster-1:dev | да |
+| bob | cluster-1:view | нет |
+
+### Дополнительные команды
+
+```bash
+# Только получить токен (без SSH)
+./qwe login --user alice --api-url http://<server-ip>:8080
+
+# Только создать сертификат (без подключения)
+./qwe ssh <server-ip> --user alice --api-url http://<server-ip>:8080 --cert-only
+
+# Проверить сертификат
+./qwe verify ~/.qwe/alice-cert.pub --api-url http://<server-ip>:8080
+```
+
+---
+
+## Настройка сервера
+
+### 1. Установить зависимости
+
+```bash
+apt-get update
+apt-get install -y golang-go g++ libcurl4-openssl-dev
+```
+
+### 2. Собрать бинарник и NSS-модуль
+
+```bash
+git clone https://github.com/mastervolkov/opkssh-oidc.git
+cd opkssh-oidc
+make          # собирает бинарник qwe
+make nss      # собирает libnss_oslogin.so
+```
+
+Или собрать бинарник на другой машине для Linux:
+
+```bash
+GOOS=linux GOARCH=amd64 make
+```
+
+### 3. Установить бинарник
+
+```bash
+cp qwe /usr/local/bin/qwe
+chmod +x /usr/local/bin/qwe
+```
+
+### 4. Установить NSS-модуль
+
+```bash
+cp libnss_oslogin.so /lib/x86_64-linux-gnu/libnss_oslogin.so.2
+ldconfig
+```
+
+Добавить `oslogin` в `/etc/nsswitch.conf`:
+
+```
+passwd: files oslogin
+group:  files oslogin
+```
+
+Проверить:
+
+```bash
+# После запуска qwe serve
+getent passwd alice
+# alice:*:1001:1001:Alice Example:/home/alice:/bin/bash
+```
+
+### 5. Запустить API-сервер
+
+Создать systemd-сервис `/etc/systemd/system/qwe.service`:
+
+```ini
+[Unit]
+Description=QWE OIDC API Server
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/qwe serve
+Environment=QWE_ISSUER=http://<server-ip>:8080
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable --now qwe
+```
+
+Проверить: `curl http://127.0.0.1:8080/`
+
+### 6. Подготовить директорию для CA
+
+```bash
+mkdir -p /etc/qwe
+```
+
+CA-ключ будет скопирован автоматически при первом подключении клиента (вручную):
+
+```bash
+# С клиента после первого ./qwe ssh --cert-only:
+scp ~/.qwe/ca.pub root@<server-ip>:/etc/qwe/ca.pub
+```
+
+### 7. Настроить sshd
+
+Добавить в `/etc/ssh/sshd_config`:
+
+```
+AuthorizedKeysCommand /usr/local/bin/qwe --data-dir /etc/qwe --api-url http://<server-ip>:8080 auth-keys %u %k %t
 AuthorizedKeysCommandUser nobody
 ```
 
-Тогда `./qwe auth-keys alice <cert> ssh-ed25519-cert-v01@openssh.com` проверит сертификат и выведет его, если авторизован.
+```bash
+systemctl restart ssh
+```
 
-## Тестовые пользователи
+### 8. Создать home-директории (опционально)
 
-- **alice**: группы `cluster-1:admin`, `cluster-1:dev` → sudo=true
-- **bob**: группы `cluster-1:view` → sudo=false
+```bash
+mkdir -p /home/alice /home/bob
+chown 1001:1001 /home/alice
+chown 1002:1002 /home/bob
+```
+
+Или включить автосоздание через PAM — добавить в `/etc/pam.d/sshd`:
+
+```
+session required pam_mkhomedir.so skel=/etc/skel umask=0022
+```
+
+---
+
+## Проверка работоспособности
+
+### На сервере
+
+```bash
+# API работает
+curl http://127.0.0.1:8080/users?username=alice
+
+# NSS резолвит пользователей
+getent passwd alice
+
+# auth-keys вручную (подставить base64 из сертификата)
+sudo -u nobody /usr/local/bin/qwe --data-dir /etc/qwe --api-url http://<server-ip>:8080 auth-keys alice <base64> ssh-ed25519-cert-v01@openssh.com
+
+# Логи sshd
+journalctl -u ssh -f
+```
+
+### На клиенте
+
+```bash
+# Проверить сертификат
+ssh-keygen -L -f ~/.qwe/alice-cert.pub
+
+# Верифицировать токен
+./qwe verify ~/.qwe/alice-cert.pub --api-url http://<server-ip>:8080
+
+# Подключиться с debug
+ssh -vvv -i ~/.qwe/alice -o CertificateFile=~/.qwe/alice-cert.pub alice@<server-ip>
+```
+
+---
+
+## Архитектура
+
+```
+Клиент                          Сервер
+──────                          ──────
+qwe ssh <ip> --user alice
+  │
+  ├─ POST /token ──────────────► qwe serve (OIDC API :8080)
+  │◄── id_token ◄──────────────┤
+  │                              │
+  ├─ ssh-keygen (CA + user key) │
+  ├─ sign cert (KeyId=user|jwt) │
+  │                              │
+  ├─ SSH connect ──────────────► sshd
+  │                              │ ├─ AuthorizedKeysCommand
+  │                              │ │   └─ qwe auth-keys %u %k %t
+  │                              │ │       ├─ parse cert from %k
+  │                              │ │       ├─ verify CA signature
+  │                              │ │       ├─ extract & verify OIDC token
+  │                              │ │       └─ output: cert-authority <ca.pub>
+  │                              │ ├─ sshd verifies cert signature
+  │                              │ └─ NSS (libnss_oslogin.so)
+  │                              │       └─ GET /users?username=alice
+  │◄── SSH session ◄────────────┤
+```
 
 ## Структура проекта
 
-- `cmd/qwe/main.go` — CLI с командами `serve`, `login`, `ssh`, `verify`, `auth-keys`.
-- `internal/api/data.go` — тестовые данные пользователей/групп.
-- `internal/api/server.go` — HTTP обработчики.
-- `internal/oidc/token.go` — генерация JWT ID токенов.
-- `internal/oidc/verify.go` — проверка токенов.
-- `internal/ssh/cert.go` — SSH CA, ключи, сертификаты, проверка.
-
-## Как использовать
-
-1. Запустить локальный API:
-
-```bash
-cd /Users/mastervolkov/Documents/golang/opkssh-oidc
-go build -o qwe ./cmd/qwe
-./qwe serve &
 ```
-
-2. В другом терминале получить token для пользователя `alice`:
-
-```bash
-./qwe login --user alice
+cmd/qwe/main.go          CLI: serve, login, ssh, verify, auth-keys
+internal/api/             OIDC API сервер (тестовые пользователи, /token, /jwks, /users, /groups)
+internal/oidc/            JWT-токены: выпуск (EdDSA) и верификация через JWKS
+internal/ssh/             SSH CA, генерация ключей, создание и проверка сертификатов
+nss/                      NSS-модуль (C++) для резолва пользователей через API
 ```
-
-3. Проверить сертификат:
-
-```bash
-./qwe verify ~/.qwe/alice-cert.pub
-```
-
-Вывод:
-```
-verified certificate for alice
-groups: cluster-1:admin, cluster-1:dev
-authorized sudo: true
-```
-
-## API
-
-- `/.well-known/openid-configuration`
-- `/jwks`
-- `/token` — POST с `{"username": "alice"}` для получения ID токена
-- `/users`
-- `/groups`
-
-## Тестирование полного флоу
-
-Для полного тестирования SSH-подключения нужен SSH-сервер с opkssh. В прототипе реализован вариант 2 из RFC: octoctl генерирует SSH-сертификаты.
-
-Чтобы протестировать `./qwe ssh <ip> --user alice`, нужен сервер с opkssh, настроенный на использование локального API как OIDC-провайдера.
-
-## NCC модуль (OS Login)
-
-NCC код адаптирован для использования локального API вместо GCP metadata server:
-
-- `kMetadataServerUrl` изменён на `"http://127.0.0.1:8080/"`
-- Реализованы `HttpGet`, `ParseJsonToPasswd` и функции для групп с использованием libcurl и regex для парсинга JSON
-- Убрана зависимость от кэш файлов; прямые HTTP запросы к API
-- API расширено поддержкой `?name=` и `?gid=` для групп
-
-Для компиляции на Linux (с NSS):
-```bash
-make  # Требует libcurl-dev, NSS headers
-```
-
-Модуль позволяет NSS (getpwnam, getpwuid, getgrnam, getgrgid) запрашивать данные из локального OIDC API.
-
-## Замечания
-
-- Сертификаты подписываются локальным CA, хранящимся в `~/.qwe/ca`.
-- `qwe` создаёт ключи `~/.qwe/<username>` и сертификат `~/.qwe/<username>-cert.pub`.
-- `verify` проверяет сертификат и ID токен по локальному JWKS.

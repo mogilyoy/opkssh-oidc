@@ -4,7 +4,7 @@ CFLAGS = -std=c++11 -Wall -Wextra -Iinclude -I/usr/local/include
 LDFLAGS = -lcurl
 
 NSS_TARGET = libnss_oslogin.so
-NSS_SRCS = ncc/ncc_oslogin.cc ncc/oslogin_utils.cc
+NSS_SRCS = nss/nss_oslogin.cc nss/oslogin_utils.cc
 NSS_OBJS = $(NSS_SRCS:.cc=.o)
 
 .PHONY: all qwe nss clean
