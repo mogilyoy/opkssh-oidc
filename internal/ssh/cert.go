@@ -122,7 +122,12 @@ func VerifyCertificate(certPath, caPubPath, apiURL string) (*VerifyResult, error
 			return bytes.Equal(auth.Marshal(), caKey.Marshal())
 		},
 	}
-	if err := checker.CheckCert(cert.KeyId, cert); err != nil {
+	// Extract username from KeyId (format: "username|jwt")
+	principal := cert.KeyId
+	if parts := strings.SplitN(cert.KeyId, "|", 2); len(parts) == 2 {
+		principal = parts[0]
+	}
+	if err := checker.CheckCert(principal, cert); err != nil {
 		return nil, fmt.Errorf("certificate validation failed: %w", err)
 	}
 	if time.Now().Unix() < int64(cert.ValidAfter) || time.Now().Unix() > int64(cert.ValidBefore) {
