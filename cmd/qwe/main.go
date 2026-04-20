@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mastervolkov/opkssh-oidc/internal/api"
+	"github.com/mastervolkov/opkssh-oidc/internal/oidc"
 	ss "github.com/mastervolkov/opkssh-oidc/internal/ssh"
 	"github.com/spf13/cobra"
 )
@@ -290,7 +291,7 @@ func verifyCmd() *cobra.Command {
 func authKeysCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth-keys <username> <key> <type>",
-		Short: "AuthorizedKeysCommand for SSH: verify certificate and output key if authorized",
+		Short: "AuthorizedKeysCommand for SSH: verify cert CA signature and OIDC token, output key if authorized",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			username := args[0]
@@ -300,48 +301,66 @@ func authKeysCmd() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "auth-keys: username=%s, keyType=%s\n", username, keyType)
 
 			if !strings.Contains(keyType, "cert") {
-				// Not a certificate, deny
-				fmt.Fprintf(os.Stderr, "not a cert\n")
+				fmt.Fprintf(os.Stderr, "auth-keys: not a cert, skipping\n")
 				return nil
 			}
 
-			// Create a temp file with the cert
-			tempFile, err := os.CreateTemp("", "cert-*.pub")
-			if err != nil {
-				return err
-			}
-			defer os.Remove(tempFile.Name())
-			defer tempFile.Close()
-
+			// Parse the cert directly from base64 (avoid file round-trip)
 			fullKey := keyType + " " + keyStr
-			if _, err := tempFile.WriteString(fullKey); err != nil {
-				return err
+			pubKey, _, _, _, err := ss.ParseAuthorizedKey([]byte(fullKey))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "auth-keys: failed to parse key: %v\n", err)
+				return nil
 			}
-			tempFile.Close()
+			cert, ok := ss.AsCertificate(pubKey)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "auth-keys: key is not a certificate\n")
+				return nil
+			}
 
-			caPub := filepath.Join(func() string {
+			// Verify CA signature
+			caPubPath := filepath.Join(func() string {
 				if d, err := resolveDataDir(); err == nil {
 					return d
 				}
 				return ".qwe"
 			}(), "ca.pub")
 
-			fmt.Fprintf(os.Stderr, "verifying cert at %s with ca %s\n", tempFile.Name(), caPub)
+			if err := ss.VerifyCertCA(cert, caPubPath); err != nil {
+				fmt.Fprintf(os.Stderr, "auth-keys: CA verification failed: %v\n", err)
+				return nil
+			}
 
-			result, err := ss.VerifyCertificate(tempFile.Name(), caPub, apiURL)
+			// Extract OIDC token from KeyId (format: "username|jwt")
+			parts := strings.SplitN(cert.KeyId, "|", 2)
+			if len(parts) != 2 {
+				fmt.Fprintf(os.Stderr, "auth-keys: no OIDC token in KeyId\n")
+				return nil
+			}
+			certUser := parts[0]
+			idToken := parts[1]
+
+			if certUser != username {
+				fmt.Fprintf(os.Stderr, "auth-keys: username mismatch: cert=%s sshd=%s\n", certUser, username)
+				return nil
+			}
+
+			// Verify OIDC token
+			claims, err := oidc.ParseAndVerifyIDToken(apiURL, idToken)
 			if err != nil {
-				// Verification failed, deny
-				fmt.Fprintf(os.Stderr, "verification failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "auth-keys: OIDC token verification failed: %v\n", err)
 				return nil
 			}
 
-			if result.Username != username {
-				// Username mismatch, deny
-				fmt.Fprintf(os.Stderr, "username mismatch: %s != %s\n", result.Username, username)
+			if claims.Subject != username {
+				fmt.Fprintf(os.Stderr, "auth-keys: token subject mismatch: %s != %s\n", claims.Subject, username)
 				return nil
 			}
 
-			// Authorized, output the key
+			fmt.Fprintf(os.Stderr, "auth-keys: authorized %s (groups: %s, sudo: %v)\n",
+				username, strings.Join(claims.Groups, ", "), ss.HasSudo(claims.Groups))
+
+			// Output the key — sshd uses this to authorize the connection
 			fmt.Printf("%s\n", fullKey)
 			return nil
 		},

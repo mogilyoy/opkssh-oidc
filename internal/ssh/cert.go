@@ -149,3 +149,40 @@ func hasSudo(groups []string) bool {
 	}
 	return false
 }
+
+// HasSudo checks if any group implies sudo access (exported for use in auth-keys).
+func HasSudo(groups []string) bool {
+	return hasSudo(groups)
+}
+
+// ParseAuthorizedKey wraps ssh.ParseAuthorizedKey.
+func ParseAuthorizedKey(in []byte) (ssh.PublicKey, string, []string, []byte, error) {
+	return ssh.ParseAuthorizedKey(in)
+}
+
+// AsCertificate tries to cast a PublicKey to *ssh.Certificate.
+func AsCertificate(key ssh.PublicKey) (*ssh.Certificate, bool) {
+	cert, ok := key.(*ssh.Certificate)
+	return cert, ok
+}
+
+// VerifyCertCA checks that the certificate was signed by the CA in caPubPath.
+func VerifyCertCA(cert *ssh.Certificate, caPubPath string) error {
+	caData, err := os.ReadFile(caPubPath)
+	if err != nil {
+		return fmt.Errorf("failed to read CA public key: %w", err)
+	}
+	caKey, _, _, _, err := ssh.ParseAuthorizedKey(caData)
+	if err != nil {
+		return fmt.Errorf("failed to parse CA public key: %w", err)
+	}
+	if !bytes.Equal(cert.SignatureKey.Marshal(), caKey.Marshal()) {
+		return errors.New("certificate was not signed by the expected CA")
+	}
+	// Check time validity
+	now := time.Now().Unix()
+	if now < int64(cert.ValidAfter) || now > int64(cert.ValidBefore) {
+		return errors.New("certificate is not currently valid (expired or not yet valid)")
+	}
+	return nil
+}
