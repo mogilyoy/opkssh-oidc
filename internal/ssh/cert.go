@@ -68,13 +68,16 @@ func CreateCertificate(username, idToken, pubKeyPath, certPath, caKeyPath string
 		Key:             pubKey,
 		Serial:          1,
 		CertType:        ssh.UserCert,
-		KeyId:           username,
+		KeyId:           username + "|" + idToken,
 		ValidPrincipals: []string{username},
 		ValidAfter:      uint64(time.Now().Unix()),
 		ValidBefore:     uint64(time.Now().Add(15 * time.Minute).Unix()),
 		Permissions: ssh.Permissions{
 			Extensions: map[string]string{
-				"oidc-id-token": idToken,
+				"permit-pty":              "",
+				"permit-user-rc":          "",
+				"permit-agent-forwarding": "",
+				"permit-port-forwarding":  "",
 			},
 		},
 	}
@@ -125,10 +128,11 @@ func VerifyCertificate(certPath, caPubPath, apiURL string) (*VerifyResult, error
 	if time.Now().Unix() < int64(cert.ValidAfter) || time.Now().Unix() > int64(cert.ValidBefore) {
 		return nil, errors.New("certificate is not currently valid")
 	}
-	idToken, ok := cert.Extensions["oidc-id-token"]
-	if !ok {
-		return nil, errors.New("OIDC token extension not found in certificate")
+	parts := strings.SplitN(cert.KeyId, "|", 2)
+	if len(parts) != 2 {
+		return nil, errors.New("OIDC token not found in certificate KeyId")
 	}
+	idToken := parts[1]
 	claims, err := oidc.ParseAndVerifyIDToken(apiURL, idToken)
 	if err != nil {
 		return nil, err
