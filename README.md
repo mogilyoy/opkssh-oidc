@@ -1,4 +1,4 @@
-# opkssh-oidc
+# ssh-oidc
 
 SSH-доступ к серверам через OIDC-аутентификацию с использованием PK Token (OpenPubKey) и короткоживущих SSH-сертификатов.
 
