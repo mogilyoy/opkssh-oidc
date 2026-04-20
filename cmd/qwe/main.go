@@ -360,8 +360,14 @@ func authKeysCmd() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "auth-keys: authorized %s (groups: %s, sudo: %v)\n",
 				username, strings.Join(claims.Groups, ", "), ss.HasSudo(claims.Groups))
 
-			// Output the key — sshd uses this to authorize the connection
-			fmt.Printf("%s\n", fullKey)
+			// Output cert-authority line with CA public key — sshd will verify the cert signature itself
+			caPubData, err := os.ReadFile(caPubPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "auth-keys: failed to read CA pub: %v\n", err)
+				return nil
+			}
+			fmt.Printf("cert-authority %s", strings.TrimSpace(string(caPubData)))
+			fmt.Println()
 			return nil
 		},
 	}
