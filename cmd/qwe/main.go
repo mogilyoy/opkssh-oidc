@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mastervolkov/opkssh-oidc/internal/api"
-	ss "github.com/mastervolkov/opkssh-oidc/internal/ssh"
+	"github.com/mogilyoy/ssh-oidc/internal/api"
+	ss "github.com/mogilyoy/ssh-oidc/internal/ssh"
 	"github.com/spf13/cobra"
 )
 

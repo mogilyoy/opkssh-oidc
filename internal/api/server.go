@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mastervolkov/opkssh-oidc/internal/oidc"
+	"github.com/mogilyoy/ssh-oidc/internal/oidc"
 )
 
 type jwksKey struct {

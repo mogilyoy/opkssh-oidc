@@ -1,4 +1,4 @@
-module github.com/mastervolkov/opkssh-oidc
+module github.com/mogilyoy/ssh-oidc
 
 go 1.25.0
 
